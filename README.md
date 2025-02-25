@@ -22,7 +22,8 @@
 ### 🎯 *Landing Page*
 The **Landing Page** provides an introduction to the platform, its features, and a call-to-action for users to sign up or log in.
 
-![image](https://github.com/user-attachments/assets/485f2fa7-39a5-4e7e-9faa-83cb82e786b9)
+![image](https://github.com/user-attachments/assets/e547407a-2e9e-479d-acd3-9f03731b792d)
+
 
 
 ---
