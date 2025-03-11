@@ -99,8 +99,8 @@ To run the project locally, follow these steps:
 
 1. **Clone the repository**:
    ```sh
-   git clone https://github.com/yourusername/DU_Hacks_Finance.git
-   cd DU_Hacks_Finance
+   git clone https://github.com/DhirSalvi/Optima.git
+   cd Optima
    ```
 2. **Install dependencies**:
    ```sh
