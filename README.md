@@ -1,8 +1,8 @@
-# DU_Hacks_Finance
+# Optima
 
 ## *Business Cost Planner and Advisor Project*
 
-**DU_Hacks_Finance** is a business finance tracker designed to help users manage their budgets, track expenses, and gain insights into their financial status. This project provides a user-friendly interface with intuitive navigation and visual representations of financial data.
+**Optima** is a business finance tracker designed to help users manage their budgets, track expenses, and gain insights into their financial status. This project provides a user-friendly interface with intuitive navigation and visual representations of financial data.
 
 ---
 
