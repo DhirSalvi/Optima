@@ -1,6 +1,6 @@
 "use client";
 import { useParams } from "next/navigation";
-import Expenses from "./Expenses"; // Adjust the import path if needed
+import Expenses from "./expenses"; // Adjust the import path if needed
 import Sidebar from "../../_components/Sidebar"; // Adjust the path if necessary
 
 export default function ExpensesPage() {
