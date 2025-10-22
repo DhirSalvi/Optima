@@ -1,0 +1,269 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+
+// Setup Express
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' })); // To parse incoming JSON requests with size limit
+
+// Simple in-memory rate limiting for serverless (basic protection)
+const requestCounts = new Map();
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const MAX_REQUESTS = 100;
+
+const rateLimiter = (req, res, next) => {
+  const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!requestCounts.has(ip)) {
+    requestCounts.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+  } else {
+    const record = requestCounts.get(ip);
+    if (now > record.resetTime) {
+      record.count = 1;
+      record.resetTime = now + RATE_LIMIT_WINDOW;
+    } else {
+      record.count++;
+      if (record.count > MAX_REQUESTS) {
+        return res.status(429).json({ message: 'Too many requests, please try again later.' });
+      }
+    }
+  }
+  next();
+};
+
+app.use('/api/', rateLimiter);
+
+// Validation helper
+const validateRequest = (validations) => {
+  return (req, res, next) => {
+    const errors = [];
+    
+    for (const validation of validations) {
+      const { field, type, required, min, max, message } = validation;
+      const value = req.body[field] || req.params[field];
+      
+      if (required && !value) {
+        errors.push({ field, message: message || `${field} is required` });
+        continue;
+      }
+      
+      if (value) {
+        if (type === 'number' && (isNaN(value) || value < (min || 0))) {
+          errors.push({ field, message: message || `${field} must be a valid positive number` });
+        }
+        if (type === 'string' && max && value.length > max) {
+          errors.push({ field, message: message || `${field} is too long` });
+        }
+      }
+    }
+    
+    if (errors.length > 0) {
+      return res.status(400).json({ errors });
+    }
+    next();
+  };
+};
+
+// Connect to MongoDB
+if (!process.env.MONGODB_URI) {
+  console.error('MONGODB_URI is not defined in environment variables');
+}
+
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) return;
+  
+  try {
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    isConnected = true;
+    console.log('MongoDB connected');
+  } catch (err) {
+    console.log('MongoDB connection error:', err);
+    throw err;
+  }
+};
+
+// =====================
+// MODELS
+// =====================
+const expenseSchema = new mongoose.Schema({
+  name: String,
+  amount: Number,
+  category: String,
+  date: { type: Date, default: Date.now },
+});
+const Expense = mongoose.model('Expense', expenseSchema);
+
+const budgetSchema = new mongoose.Schema({
+  name: String,
+  amount: Number,
+  emoji: String,
+});
+const Budget = mongoose.model('Budget', budgetSchema);
+
+// =====================
+// ROUTES
+// =====================
+
+// Create Budget
+app.post('/api/budgets', validateRequest([
+  { field: 'name', type: 'string', required: true, max: 100 },
+  { field: 'amount', type: 'number', required: true, min: 0 },
+  { field: 'emoji', type: 'string', max: 10 }
+]), async (req, res) => {
+  try {
+    await connectDB();
+    const { name, amount, emoji } = req.body;
+    const newBudget = new Budget({ name, amount, emoji });
+    await newBudget.save();
+    res.status(201).json(newBudget);
+  } catch (error) {
+    console.error('Error creating budget:', error);
+    res.status(500).json({ message: 'Error creating budget' });
+  }
+});
+
+// Fetch Total Budget
+app.get('/api/total-budget', async (req, res) => {
+  try {
+    await connectDB();
+    const totalBudget = await Budget.aggregate([
+      { $group: { _id: null, totalAmount: { $sum: "$amount" } } },
+    ]);
+    res.status(200).json({ totalBudget: totalBudget.length > 0 ? totalBudget[0].totalAmount : 0 });
+  } catch (error) {
+    console.error('Error calculating total budget:', error);
+    res.status(500).json({ message: 'Error calculating total budget' });
+  }
+});
+
+// Fetch All Expenses
+app.get('/api/expenses', async (req, res) => {
+  try {
+    await connectDB();
+    const expenses = await Expense.find();
+    res.status(200).json(expenses);
+  } catch (error) {
+    console.error('Error fetching expenses:', error);
+    res.status(500).json({ message: 'Error fetching expenses' });
+  }
+});
+
+// Add New Expense
+app.post('/api/expenses', validateRequest([
+  { field: 'name', type: 'string', required: true, max: 100 },
+  { field: 'amount', type: 'number', required: true, min: 0 },
+  { field: 'category', type: 'string', required: true, max: 50 }
+]), async (req, res) => {
+  try {
+    await connectDB();
+    const { name, amount, category } = req.body;
+    const newExpense = new Expense({ name, amount, category });
+    await newExpense.save();
+    res.status(201).json(newExpense);
+  } catch (error) {
+    console.error('Error adding expense:', error);
+    res.status(500).json({ message: 'Error adding expense' });
+  }
+});
+
+// Update Expense by ID
+app.put('/api/expenses/:id', validateRequest([
+  { field: 'name', type: 'string', required: true, max: 100 },
+  { field: 'amount', type: 'number', required: true, min: 0 },
+  { field: 'category', type: 'string', required: true, max: 50 }
+]), async (req, res) => {
+  try {
+    await connectDB();
+    const { id } = req.params;
+    const { name, amount, category } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid expense ID' });
+    }
+
+    const updatedExpense = await Expense.findByIdAndUpdate(
+      id,
+      { name, amount, category },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedExpense) {
+      return res.status(404).json({ message: 'Expense not found' });
+    }
+
+    res.status(200).json(updatedExpense);
+  } catch (error) {
+    console.error('Error updating expense:', error);
+    res.status(500).json({ message: 'Error updating expense' });
+  }
+});
+
+// Delete Budget by ID
+app.delete('/api/budgets/:id', async (req, res) => {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid budget ID' });
+    }
+
+    const deletedBudget = await Budget.findByIdAndDelete(id);
+
+    if (!deletedBudget) {
+      return res.status(404).json({ message: 'Budget not found' });
+    }
+
+    res.status(200).json({ message: 'Budget deleted successfully', deletedBudget });
+  } catch (error) {
+    console.error('Error deleting budget:', error);
+    res.status(500).json({ message: 'Error deleting budget' });
+  }
+});
+
+// Delete Expense by ID
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    await connectDB();
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid expense ID' });
+    }
+
+    const deletedExpense = await Expense.findByIdAndDelete(id);
+
+    if (!deletedExpense) {
+      return res.status(404).json({ message: 'Expense not found' });
+    }
+
+    res.status(200).json({ message: 'Expense deleted successfully', deletedExpense });
+  } catch (error) {
+    console.error('Error deleting expense:', error);
+    res.status(500).json({ message: 'Error deleting expense' });
+  }
+});
+
+// Fetch All Budgets
+app.get('/api/budgets', async (req, res) => {
+  try {
+    await connectDB();
+    const budgets = await Budget.find();
+    res.status(200).json(budgets);
+  } catch (error) {
+    console.error('Error fetching budgets:', error);
+    res.status(500).json({ message: 'Error fetching budgets' });
+  }
+});
+
+// EXPORT the Express App for Vercel Serverless Functions
+module.exports = app;
